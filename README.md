@@ -34,7 +34,7 @@ Scraproxy is a small API built around Playwright, allowing you to take screensho
 ### 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/scraproxy.git
+git clone https://github.com/StasonJatham/scraproxy.git
 cd scraproxy
 ```
 
