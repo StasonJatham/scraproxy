@@ -72,7 +72,10 @@ class ResponseModel(BaseModel):
 
 
 class ScreenshotResponse(BaseModel):
-    screenshot: str  # Base64-encoded screenshot
+    # Base64-encoded screenshot
+    urL: str
+    screenshot: str
+    thumbnail: str
 
 
 class MinimizeHTMLResponse(BaseModel):
