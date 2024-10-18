@@ -81,3 +81,12 @@ class MinimizeHTMLResponse(BaseModel):
 
 class ExtractTextResponse(BaseModel):
     text: str  # Extracted plain text from HTML content
+
+
+class ReaderResponse(BaseModel):
+    title: str
+    content: str
+
+
+class MarkdownResponse(BaseModel):
+    markdown: str

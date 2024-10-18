@@ -17,7 +17,11 @@ from definitions import (
     MinimizeHTMLResponse,
     ExtractTextResponse,
     ResponseModel,
+    ReaderResponse,
+    MarkdownResponse,
 )
+import html2text
+from readability import Document
 from utils import generate_cache_key, load_env_file
 import json
 
@@ -526,3 +530,47 @@ async def extract_text_from_html(
 
     # Return the extracted plain text
     return ExtractTextResponse(text=text_content)
+
+
+@app.post("/reader", response_model=ReaderResponse)
+async def html_to_reader(html: str = Form(...)):
+    """
+    Extracts the main readable content and title from the provided HTML using the readability library.
+
+    Parameters:
+    - **html**: The raw HTML content provided via a form field.
+
+    Returns:
+    - **ReaderResponse**: A JSON object containing the extracted title and main content.
+    """
+    if not html:
+        raise HTTPException(status_code=400, detail="No HTML content provided")
+
+    # Use readability-lxml to extract the main content
+    doc = Document(html)
+    reader_content = doc.summary()  # Extracts the main content
+    title = doc.title()
+
+    return ReaderResponse(title=title, content=reader_content)
+
+
+@app.post("/markdown", response_model=MarkdownResponse)
+async def html_to_markdown(html: str = Form(...)):
+    """
+    Convert the provided HTML content into Markdown format.
+
+    ### Parameters:
+    - **html**: The raw HTML content provided via a form field.
+
+    ### Returns:
+    - **MarkdownResponse**: A JSON object containing the converted Markdown content.
+    """
+    if not html:
+        raise HTTPException(status_code=400, detail="No HTML content provided")
+
+    # Convert the HTML to Markdown using html2text
+    markdown_converter = html2text.HTML2Text()
+    markdown_converter.ignore_links = False  # Optionally keep the links
+    markdown_content = markdown_converter.handle(html)
+
+    return MarkdownResponse(markdown=markdown_content)
