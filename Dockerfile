@@ -1,5 +1,4 @@
-# Use a slim Python 3.11 image
-FROM python:3.11-slim-bullseye
+FROM python:3.12-slim-bullseye
 
 # Set environment variables
 ENV PLAYWRIGHT_BROWSERS_PATH=0
@@ -40,4 +39,4 @@ COPY . .
 EXPOSE 8000
 
 # Command to run Uvicorn with your FastAPI app
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

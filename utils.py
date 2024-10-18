@@ -18,10 +18,8 @@ def load_env_file(env_file=".env"):
     """
     if os.path.exists(env_file):
         load_dotenv(env_file)
-        print(f"{env_file} loaded successfully.")
         return True
     else:
-        print(f"{env_file} file not found.")
         return False
 
 
