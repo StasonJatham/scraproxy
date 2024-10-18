@@ -1,0 +1,14 @@
+# Ignore virtual environment directory
+venv/
+.venv/
+
+# Ignore __pycache__ directories
+__pycache__/
+
+# Ignore any .pyc files
+*.pyc
+
+# Ignore other unwanted files or directories (like .git or node_modules if applicable)
+.git/
+node_modules/
+.DS_Store
