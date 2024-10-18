@@ -5,3 +5,4 @@ browsers
 cache 
 cache_dir
 downloads
+.env

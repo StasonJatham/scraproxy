@@ -18,7 +18,7 @@ from definitions import (
     ExtractTextResponse,
     ResponseModel,
 )
-from utils import generate_cache_key
+from utils import generate_cache_key, load_env_file
 import json
 
 
@@ -47,15 +47,25 @@ app = FastAPI(
 )
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
-# Initialize disk cache
-cache = Cache("./cache")
-CACHE_EXPIRATION_SECONDS = 3600
+
+def setup_configurations():
+    load_env_file()
+
+    cache = Cache("./cache")
+    cache_expiration_seconds = int(os.getenv("CACHE_EXPIRATION_SECONDS", 3600))
+
+    playwright_browsers_path = os.getenv("PLAYWRIGHT_BROWSERS_PATH", "0")
+    if playwright_browsers_path != "0":
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = playwright_browsers_path
+
+    api_key = os.environ.get("API_KEY", "none")
+    security = HTTPBearer(auto_error=False)
+
+    return cache, cache_expiration_seconds, security, api_key
 
 
-API_KEY = os.environ.get("API_KEY", "none")
-
-
-security = HTTPBearer(auto_error=False)
+# Initialize configurations
+cache, CACHE_EXPIRATION_SECONDS, security, API_KEY = setup_configurations()
 
 
 def optional_auth(
@@ -307,7 +317,7 @@ async def browse(
                 )
 
         def log_console(msg):
-            logs.append({"console_message": msg.text()})
+            logs.append({"console_message": msg})
 
         def log_js_error(error):
             logs.append({"javascript_error": str(error)})
@@ -337,6 +347,7 @@ async def browse(
                 await page.goto(url, method=method, post_data=post_data)
             else:
                 await page.goto(url)
+            await page.wait_for_load_state("load")
 
         except PlaywrightTimeoutError:
             # Log timeout issues
