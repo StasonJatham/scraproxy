@@ -1,0 +1,7 @@
+.venv
+cache_dir
+*.pyc
+browsers
+cache 
+cache_dir
+downloads

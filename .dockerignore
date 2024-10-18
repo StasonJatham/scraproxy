@@ -12,3 +12,8 @@ __pycache__/
 .git/
 node_modules/
 .DS_Store
+
+browsers
+cache_dir
+cache
+downloads
