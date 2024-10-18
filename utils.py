@@ -23,13 +23,32 @@ def load_env_file(env_file=".env"):
         return False
 
 
-# Helper function to optimize image
 def optimize_image(image, width=None, height=None, quality=85):
+    """
+    Resizes and optimizes an image using Pillow.
+    - If width and height are None, the image is optimized in its original size.
+    - Otherwise, the image is resized to the given width and height.
+    """
     if width and height:
         image = image.resize((width, height), Image.Resampling.LANCZOS)
 
+    # Convert the image to JPEG and optimize it
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=quality, optimize=True)
+    return buffer.getvalue()
+
+
+def create_thumbnail(image, max_size):
+    """
+    Creates a thumbnail using Pillow's thumbnail method, maintaining aspect ratio.
+    The image will fit within a (max_size x max_size) box while keeping proportions.
+    """
+    img_copy = image.copy()
+    img_copy.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+    # Convert the thumbnail to JPEG and optimize it
+    buffer = io.BytesIO()
+    img_copy.save(buffer, format="JPEG", quality=85, optimize=True)
     return buffer.getvalue()
 
 

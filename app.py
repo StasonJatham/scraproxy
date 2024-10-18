@@ -22,9 +22,10 @@ from definitions import (
 )
 import html2text
 from readability import Document
-from utils import generate_cache_key, load_env_file
+from utils import generate_cache_key, load_env_file, optimize_image, create_thumbnail
 import json
-
+from PIL import Image
+import io
 
 app = FastAPI(
     title="Playwright-based Webpage Scraper API",
@@ -125,14 +126,10 @@ async def browse(
     """
     cache_key = generate_cache_key(f"{url}-{method}-{post_data}-{browser_name}")
 
-    # Check if the result is already cached
     if cache_key in cache:
-        return JSONResponse(
-            content=json.loads(cache[cache_key])
-        )  # Deserialize and return cached data
+        return JSONResponse(content=json.loads(cache[cache_key]))
 
     async with async_playwright() as p:
-        # Select the browser
         browser_type = getattr(p, browser_name, None)
         if browser_type is None:
             return JSONResponse(
@@ -140,7 +137,6 @@ async def browse(
                 status_code=400,
             )
 
-        # Set up download directory
         download_dir = os.path.join(os.getcwd(), "downloads")
         os.makedirs(download_dir, exist_ok=True)
 
@@ -150,17 +146,14 @@ async def browse(
 
         network_data = []
         logs = []
-        redirects = []  # To capture redirects
+        redirects = []
         performance_metrics = {}
         downloaded_files = []
 
-        # Track requests and responses with detailed timings and error handling
         async def log_request(request):
             try:
-                # Try to log timing data, but continue even if it fails
                 timing = request.timing or {}
 
-                # Try to fetch request headers
                 try:
                     headers = await request.all_headers()
                 except Exception as e:
@@ -169,14 +162,12 @@ async def browse(
                         {"warning": f"Failed to fetch request headers: {str(e)}"}
                     )
 
-                # Try to fetch cookies
                 try:
                     cookies = await context.cookies()
                 except Exception as e:
                     cookies = "Unavailable due to error"
                     logs.append({"warning": f"Failed to fetch cookies: {str(e)}"})
 
-                # Log the request data
                 network_data.append(
                     {
                         "url": request.url,
@@ -201,7 +192,6 @@ async def browse(
                 )
 
             except Exception as e:
-                # Log any unexpected errors during the request logging
                 logs.append(
                     {"error": f"An error occurred while logging the request: {str(e)}"}
                 )
@@ -211,7 +201,6 @@ async def browse(
                 request = response.request
                 timing = request.timing or {}
 
-                # Try to fetch request headers
                 try:
                     request_headers = await request.all_headers()
                 except Exception as e:
@@ -220,7 +209,6 @@ async def browse(
                         {"warning": f"Failed to fetch request headers: {str(e)}"}
                     )
 
-                # Try to fetch response headers
                 try:
                     response_headers = await response.all_headers()
                 except Exception as e:
@@ -233,7 +221,6 @@ async def browse(
                 response_body = None
                 response_size = 0
 
-                # Try to fetch response body
                 try:
                     content_type = response_headers.get("content-type", "")
                     if "text" in content_type or "json" in content_type:
@@ -247,14 +234,12 @@ async def browse(
                     response_body = "Response body unavailable due to error"
                     logs.append({"warning": f"Failed to fetch response body: {str(e)}"})
 
-                # Try to fetch cookies
                 try:
                     cookies = await context.cookies()
                 except Exception as e:
                     cookies = "Unavailable due to error"
                     logs.append({"warning": f"Failed to fetch cookies: {str(e)}"})
 
-                # Try to fetch security details
                 try:
                     security_details = await response.security_details()
                 except Exception as e:
@@ -263,7 +248,6 @@ async def browse(
                         {"warning": f"Failed to fetch security details: {str(e)}"}
                     )
 
-                # Try to fetch server address
                 try:
                     server_address = await response.server_addr()
                 except Exception as e:
@@ -272,7 +256,6 @@ async def browse(
                         {"warning": f"Failed to fetch server address: {str(e)}"}
                     )
 
-                # Log the response data
                 network_data.append(
                     {
                         "url": response.url,
@@ -301,13 +284,12 @@ async def browse(
                     }
                 )
 
-                # Handle redirects using redirected_from or redirected_to properties
                 if request.redirected_from:
                     redirects.append(
                         {
                             "step": len(redirects) + 1,
-                            "from": request.redirected_from.url,  # The original URL before the redirect
-                            "to": request.redirected_from.redirected_to.url,  # The URL where it was redirected
+                            "from": request.redirected_from.url,
+                            "to": request.redirected_from.redirected_to.url,
                             "status_code": status_code,
                             "server": await response.server_addr(),
                             "resource_type": request.resource_type,
@@ -315,7 +297,6 @@ async def browse(
                     )
 
             except Exception as e:
-                # Log any unexpected errors during the response logging
                 logs.append(
                     {"error": f"An error occurred while logging the response: {str(e)}"}
                 )
@@ -331,7 +312,6 @@ async def browse(
         page.on("console", log_console)
         page.on("pageerror", log_js_error)
 
-        # Handle file downloads
         async def handle_download(download):
             path = await download.path()
             file_name = download.suggested_filename
@@ -340,12 +320,10 @@ async def browse(
                 downloaded_files.append(
                     {"file_name": file_name, "file_content": file_content}
                 )
-            # Optionally remove the downloaded file after reading
             os.remove(path)
 
         page.on("download", handle_download)
 
-        # Navigate to the URL
         try:
             if method == "POST" and post_data:
                 await page.goto(url, method=method, post_data=post_data)
@@ -354,10 +332,8 @@ async def browse(
             await page.wait_for_load_state("load")
 
         except PlaywrightTimeoutError:
-            # Log timeout issues
             logs.append({"console_message": "Navigation timed out"})
 
-        # Capture page information, handle navigation destruction gracefully
         try:
             title = await page.title()
             meta_description = (
@@ -374,7 +350,6 @@ async def browse(
         cookies = await context.cookies()
         screenshot = await page.screenshot()
 
-        # Collect the response data (ensure all data is serializable)
         response_data = {
             "redirects": redirects,
             "page_title": title,
@@ -398,6 +373,8 @@ async def screenshotter(
     url: str,
     full_page: bool = Query(False),
     live: bool = Query(False),
+    thumbnail_size: int = 450,
+    quality: int = 85,
     credentials: HTTPAuthorizationCredentials = Depends(optional_auth),
 ):
     """
@@ -417,30 +394,33 @@ async def screenshotter(
     Raises:
         HTTPException: If there is any issue during the Playwright interaction or screenshot capture.
     """
-    # Generate a unique cache key for this request
     cache_key = generate_cache_key(f"{url}_{full_page}")
 
-    # If `live` is False, check if the screenshot is already cached
     if not live and cache_key in cache:
-        return JSONResponse(content={"screenshot": cache[cache_key]})
+        return JSONResponse(content=cache[cache_key])
 
-    # Take a new screenshot using Playwright if not cached or `live=True`
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
-        await page.goto(url)
+        await page.goto(url, wait_until="networkidle")
         screenshot = await page.screenshot(full_page=full_page)
         await browser.close()
 
-    # Convert the screenshot to base64 encoding
-    screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
+        image = Image.open(io.BytesIO(screenshot))
+        full_optimized = optimize_image(image, quality=quality)
+        thumbnail_image = create_thumbnail(image, max_size=thumbnail_size)
+        screenshot_b64 = base64.b64encode(full_optimized).decode("utf-8")
+        thumbnail_b64 = base64.b64encode(thumbnail_image).decode("utf-8")
+        images = {
+            "url": page.url,
+            "screenshot": screenshot_b64,
+            "thumbnail": thumbnail_b64,
+        }
 
-    # Cache the new screenshot unless `live=True`
     if not live:
-        cache.set(cache_key, screenshot_b64, expire=CACHE_EXPIRATION_SECONDS)
+        cache.set(cache_key, images, expire=CACHE_EXPIRATION_SECONDS)
 
-    # Return the screenshot as a JSON response
-    return JSONResponse(content={"screenshot": screenshot_b64})
+    return JSONResponse(content=images)
 
 
 @app.post("/minimize", response_model=MinimizeHTMLResponse, status_code=200)
@@ -470,20 +450,13 @@ async def minimize_html(
             "minified_html": "string"
         }
     """
-    # Generate a cache key for the HTML content
-    cache_key = generate_cache_key(html)
 
-    # If the minimized HTML is already cached, return the cached version
+    cache_key = generate_cache_key(html)
     if cache_key in cache:
         return JSONResponse(content={"minified_html": cache[cache_key]})
 
-    # Minimize the HTML content
     minified_html = htmlmin.minify(html, remove_comments=True, remove_empty_space=True)
-
-    # Cache the minimized HTML content
     cache.set(cache_key, minified_html, expire=CACHE_EXPIRATION_SECONDS)
-
-    # Return the minimized HTML content
     return MinimizeHTMLResponse(minified_html=minified_html)
 
 
@@ -514,21 +487,14 @@ async def extract_text_from_html(
             "text": "string"
         }
     """
-    # Generate a cache key for the HTML content
     cache_key = generate_cache_key(html)
 
-    # If the extracted text is already cached, return the cached version
     if cache_key in cache:
         return JSONResponse(content={"text": cache[cache_key]})
 
-    # Parse the HTML content and extract the plain text
     soup = BeautifulSoup(html, "html.parser")
     text_content = soup.get_text(separator=" ", strip=True)
-
-    # Cache the extracted text content
     cache.set(cache_key, text_content, expire=CACHE_EXPIRATION_SECONDS)
-
-    # Return the extracted plain text
     return ExtractTextResponse(text=text_content)
 
 
@@ -546,9 +512,8 @@ async def html_to_reader(html: str = Form(...)):
     if not html:
         raise HTTPException(status_code=400, detail="No HTML content provided")
 
-    # Use readability-lxml to extract the main content
     doc = Document(html)
-    reader_content = doc.summary()  # Extracts the main content
+    reader_content = doc.summary()
     title = doc.title()
 
     return ReaderResponse(title=title, content=reader_content)
@@ -568,9 +533,8 @@ async def html_to_markdown(html: str = Form(...)):
     if not html:
         raise HTTPException(status_code=400, detail="No HTML content provided")
 
-    # Convert the HTML to Markdown using html2text
     markdown_converter = html2text.HTML2Text()
-    markdown_converter.ignore_links = False  # Optionally keep the links
+    markdown_converter.ignore_links = False
     markdown_content = markdown_converter.handle(html)
 
     return MarkdownResponse(markdown=markdown_content)
