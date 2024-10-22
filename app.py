@@ -114,6 +114,7 @@ async def browse(
 
     ### Returns:
     - A JSON object containing:
+        - **network**: (str) Netwrok Type, either Request or Response
         - **page_title**: (str) The title of the webpage.
         - **meta_description**: (str) The meta description of the webpage, if available.
         - **network_data**: (List[NetworkDataModel]) Detailed timing and headers for each network request.
