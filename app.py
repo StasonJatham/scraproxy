@@ -170,6 +170,7 @@ async def browse(
 
                 network_data.append(
                     {
+                        "network": "request",
                         "url": request.url,
                         "method": request.method,
                         "headers": headers,
@@ -258,6 +259,7 @@ async def browse(
 
                 network_data.append(
                     {
+                        "network": "response",
                         "url": response.url,
                         "status": response.status,
                         "response_size": response_size,

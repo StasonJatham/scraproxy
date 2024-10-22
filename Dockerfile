@@ -36,7 +36,7 @@ RUN playwright install --with-deps chromium
 COPY . .
 
 # Expose port 8000 for the FastAPI app
-EXPOSE 8000
+EXPOSE 5001
 
 # Command to run Uvicorn with your FastAPI app
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5001"]

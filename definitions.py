@@ -59,6 +59,7 @@ class RedirectModel(BaseModel):
 
 
 class ResponseModel(BaseModel):
+    network: str
     page_title: str
     meta_description: str
     network_data: List[NetworkDataModel]
