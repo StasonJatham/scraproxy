@@ -1,17 +1,15 @@
 from fastapi import FastAPI, Depends, HTTPException, Form, Query, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
-from playwright.async_api import (
-    async_playwright,
-    TimeoutError as PlaywrightTimeoutError,
-)
+from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from starlette.middleware.gzip import GZipMiddleware
 import playwright._impl._errors as playwright_errors
 import base64
 import os
 from bs4 import BeautifulSoup
 import htmlmin
-from diskcache import Cache
+
 from definitions import (
     ScreenshotResponse,
     MinimizeHTMLResponse,
@@ -22,10 +20,13 @@ from definitions import (
 )
 import html2text
 from readability import Document
-from utils import generate_cache_key, load_env_file, optimize_image, create_thumbnail
+from utils import generate_cache_key, optimize_image, create_thumbnail
 import json
 from PIL import Image
 import io
+import uuid
+from config import setup_configurations
+
 
 app = FastAPI(
     title="Playwright-based Webpage Scraper API",
@@ -51,25 +52,6 @@ app = FastAPI(
     version="1.0.0",
 )
 app.add_middleware(GZipMiddleware, minimum_size=500)
-
-
-def setup_configurations():
-    load_env_file()
-
-    cache = Cache("./cache")
-    cache_expiration_seconds = int(os.getenv("CACHE_EXPIRATION_SECONDS", 3600))
-
-    playwright_browsers_path = os.getenv("PLAYWRIGHT_BROWSERS_PATH", "0")
-    if playwright_browsers_path != "0":
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = playwright_browsers_path
-
-    api_key = os.environ.get("API_KEY", "none")
-    security = HTTPBearer(auto_error=False)
-
-    return cache, cache_expiration_seconds, security, api_key
-
-
-# Initialize configurations
 cache, CACHE_EXPIRATION_SECONDS, security, API_KEY = setup_configurations()
 
 
@@ -126,6 +108,7 @@ async def browse(
         - **redirects**: (List[RedirectModel]) Information about the redirects that occurred during the browsing session.
     """
     cache_key = generate_cache_key(f"{url}-{method}-{post_data}-{browser_name}")
+    request_uuid_map = {}
 
     if cache_key in cache:
         return JSONResponse(content=json.loads(cache[cache_key]))
@@ -153,6 +136,11 @@ async def browse(
 
         async def log_request(request):
             try:
+                request_uuid = str(uuid.uuid4())  # Generate UUID for the request
+                request_uuid_map[request] = (
+                    request_uuid  # Store the UUID for the request
+                )
+
                 timing = request.timing or {}
 
                 try:
@@ -169,14 +157,24 @@ async def browse(
                     cookies = "Unavailable due to error"
                     logs.append({"warning": f"Failed to fetch cookies: {str(e)}"})
 
+                redirected_from_url = (
+                    request.redirected_from.url if request.redirected_from else None
+                )
+                redirected_to_url = (
+                    request.redirected_to.url if request.redirected_to else None
+                )
+
                 network_data.append(
                     {
+                        "uuid": request_uuid,
                         "network": "request",
                         "url": request.url,
                         "method": request.method,
                         "headers": headers,
                         "cookies": cookies,
                         "resource_type": request.resource_type,
+                        "redirected_from": redirected_from_url,
+                        "redirected_to": redirected_to_url,
                         "timing": {
                             "start_time": timing.get("startTime", -1),
                             "domain_lookup_start": timing.get("domainLookupStart", -1),
@@ -201,6 +199,8 @@ async def browse(
         async def log_response(response):
             try:
                 request = response.request
+                request_uuid = request_uuid_map.get(request)
+
                 timing = request.timing or {}
 
                 try:
@@ -258,8 +258,16 @@ async def browse(
                         {"warning": f"Failed to fetch server address: {str(e)}"}
                     )
 
+                redirected_to_url = (
+                    request.redirected_to.url if request.redirected_to else None
+                )
+                redirected_from_url = (
+                    request.redirected_from.url if request.redirected_from else None
+                )
+
                 network_data.append(
                     {
+                        "uuid": request_uuid,
                         "network": "response",
                         "url": response.url,
                         "status": response.status,
@@ -268,6 +276,8 @@ async def browse(
                         "security": security_details,
                         "server": server_address,
                         "resource_type": request.resource_type,
+                        "redirected_to": redirected_to_url,
+                        "redirected_from": redirected_from_url,
                         "timing": {
                             "start_time": timing.get("startTime", -1),
                             "domain_lookup_start": timing.get("domainLookupStart", -1),
@@ -305,10 +315,16 @@ async def browse(
                 )
 
         def log_console(msg):
-            logs.append({"console_message": msg})
+            try:
+                logs.append({"console_message": msg})
+            except:
+                pass
 
         def log_js_error(error):
-            logs.append({"javascript_error": str(error)})
+            try:
+                logs.append({"javascript_error": str(error)})
+            except:
+                pass
 
         page.on("request", log_request)
         page.on("response", log_response)
