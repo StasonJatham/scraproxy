@@ -68,6 +68,7 @@ class ResponseModel(BaseModel):
     resource_type: str
     performance_metrics: PerformanceMetricsModel
     screenshot: str
+    thumbnail: str
     downloaded_files: List[DownloadedFileModel]
     redirects: List[RedirectModel]
 

@@ -9,6 +9,7 @@ import base64
 import os
 from bs4 import BeautifulSoup
 import htmlmin
+import asyncio
 
 from definitions import (
     ScreenshotResponse,
@@ -345,11 +346,16 @@ async def browse(
 
         try:
             if method == "POST" and post_data:
-                await page.goto(url, method=method, post_data=post_data)
+                await page.goto(
+                    url,
+                    method=method,
+                    post_data=post_data,
+                    wait_until="networkidle",
+                    timeout=120000,
+                )
             else:
-                await page.goto(url)
-            await page.wait_for_load_state("load")
-
+                await page.goto(url, wait_until="networkidle", timeout=120000)
+            await page.wait_for_load_state("networkidle", timeout=120000)
         except PlaywrightTimeoutError:
             logs.append({"console_message": "Navigation timed out"})
 
@@ -367,7 +373,14 @@ async def browse(
         performance_metrics["performance_timing"] = performance_timing
 
         cookies = await context.cookies()
+
+        await asyncio.sleep(10)
         screenshot = await page.screenshot()
+        image = Image.open(io.BytesIO(screenshot))
+        full_optimized = optimize_image(image, quality=85)
+        thumbnail_image = create_thumbnail(image, max_size=450)
+        screenshot_b64 = base64.b64encode(full_optimized).decode("utf-8")
+        thumbnail_b64 = base64.b64encode(thumbnail_image).decode("utf-8")
 
         response_data = {
             "redirects": redirects,
@@ -377,7 +390,8 @@ async def browse(
             "logs": logs,
             "cookies": cookies,
             "performance_metrics": performance_metrics,
-            "screenshot": base64.b64encode(screenshot).decode("utf-8"),
+            "screenshot": screenshot_b64,
+            "thumbnail": thumbnail_b64,
             "downloaded_files": downloaded_files,
         }
 
