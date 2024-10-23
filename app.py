@@ -26,7 +26,7 @@ import json
 from PIL import Image
 import io
 import uuid
-from config import setup_configurations, url_to_sha256_filename, close_cookie_banners
+from config import setup_configurations, url_to_sha256_filename, hide_cookie_banners
 
 
 app = FastAPI(
@@ -353,7 +353,7 @@ async def browse(
 
             # attemt to close cookiebanner
             if cookiebanner:
-                close_cookie_banners(page)
+                await hide_cookie_banners(page)
             await page.wait_for_load_state("networkidle", timeout=120000)
         except PlaywrightTimeoutError:
             logs.append({"console_message": "Navigation timed out"})
@@ -372,6 +372,7 @@ async def browse(
         performance_metrics["performance_timing"] = performance_timing
 
         cookies = await context.cookies()
+        # attemt to close cookiebanner
 
         # Capture screenshot
         screenshot = await page.screenshot()
