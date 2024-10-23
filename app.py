@@ -10,7 +10,6 @@ import base64
 import os
 from bs4 import BeautifulSoup
 import htmlmin
-import asyncio
 
 from definitions import (
     ScreenshotResponse,
@@ -27,7 +26,7 @@ import json
 from PIL import Image
 import io
 import uuid
-from config import setup_configurations, url_to_sha256_filename
+from config import setup_configurations, url_to_sha256_filename, close_cookie_banners
 
 
 app = FastAPI(
@@ -84,10 +83,11 @@ async def browse(
     method: str = "GET",
     post_data: str = None,
     browser_name: str = "chromium",
+    cookiebanner: bool = Query(False, description="Attempt to close cookie banners"),
     credentials: HTTPAuthorizationCredentials = Depends(optional_auth),
 ):
     """
-    Browse a webpage and gather various details including network data, logs, performance metrics, and more.
+    Browse a webpage and gather various details including network data, logs, performance metrics, screenshots, and a video of the session.
 
     ### Parameters:
     - **url**: (str) The URL of the webpage to browse.
@@ -98,7 +98,7 @@ async def browse(
 
     ### Returns:
     - A JSON object containing:
-        - **network**: (str) Netwrok Type, either Request or Response
+        - **redirects**: (List[RedirectModel]) Information about redirects during the session.
         - **page_title**: (str) The title of the webpage.
         - **meta_description**: (str) The meta description of the webpage, if available.
         - **network_data**: (List[NetworkDataModel]) Detailed timing and headers for each network request.
@@ -106,8 +106,19 @@ async def browse(
         - **cookies**: (List[CookieModel]) Cookies set by the webpage.
         - **performance_metrics**: (PerformanceMetricsModel) Performance timing metrics for the page load.
         - **screenshot**: (str) A base64-encoded screenshot of the webpage.
-        - **downloaded_files**: (List[DownloadedFileModel]) A list of files downloaded during the browsing session.
-        - **redirects**: (List[RedirectModel]) Information about the redirects that occurred during the browsing session.
+        - **thumbnail**: (str) A base64-encoded thumbnail of the webpage.
+        - **downloaded_files**: (List[DownloadedFileModel]) Files downloaded during the browsing session.
+        - **video**: (str) A base64-encoded video of the browsing session.
+
+    ### Example of decoding the video on the client side:
+    ```python
+    import base64
+
+    base64_video = response_data['video']
+    video_bytes = base64.b64decode(base64_video)
+    with open('session_video.webm', 'wb') as video_file:
+        video_file.write(video_bytes)
+    ```
     """
     cache_key = generate_cache_key(f"{url}-{method}-{post_data}-{browser_name}")
     request_uuid_map = {}
@@ -126,8 +137,17 @@ async def browse(
         download_dir = os.path.join(os.getcwd(), "downloads")
         os.makedirs(download_dir, exist_ok=True)
 
+        # Set up video recording directory
+        video_dir = os.path.join(os.getcwd(), "videos")
+        os.makedirs(video_dir, exist_ok=True)
+
+        # Launch browser with video recording enabled
         browser = await browser_type.launch(headless=True)
-        context = await browser.new_context(accept_downloads=True)
+        context = await browser.new_context(
+            accept_downloads=True,
+            record_video_dir=video_dir,
+            record_video_size={"width": 1280, "height": 720},
+        )
         page = await context.new_page()
 
         network_data = []
@@ -138,10 +158,8 @@ async def browse(
 
         async def log_request(request):
             try:
-                request_uuid = str(uuid.uuid4())  # Generate UUID for the request
-                request_uuid_map[request] = (
-                    request_uuid  # Store the UUID for the request
-                )
+                request_uuid = str(uuid.uuid4())
+                request_uuid_map[request] = request_uuid
 
                 timing = request.timing or {}
 
@@ -177,19 +195,7 @@ async def browse(
                         "resource_type": request.resource_type,
                         "redirected_from": redirected_from_url,
                         "redirected_to": redirected_to_url,
-                        "timing": {
-                            "start_time": timing.get("startTime", -1),
-                            "domain_lookup_start": timing.get("domainLookupStart", -1),
-                            "domain_lookup_end": timing.get("domainLookupEnd", -1),
-                            "connect_start": timing.get("connectStart", -1),
-                            "secure_connection_start": timing.get(
-                                "secureConnectionStart", -1
-                            ),
-                            "connect_end": timing.get("connectEnd", -1),
-                            "request_start": timing.get("requestStart", -1),
-                            "response_start": timing.get("responseStart", -1),
-                            "response_end": timing.get("responseEnd", -1),
-                        },
+                        "timing": timing,
                     }
                 )
 
@@ -280,19 +286,7 @@ async def browse(
                         "resource_type": request.resource_type,
                         "redirected_to": redirected_to_url,
                         "redirected_from": redirected_from_url,
-                        "timing": {
-                            "start_time": timing.get("startTime", -1),
-                            "domain_lookup_start": timing.get("domainLookupStart", -1),
-                            "domain_lookup_end": timing.get("domainLookupEnd", -1),
-                            "connect_start": timing.get("connectStart", -1),
-                            "secure_connection_start": timing.get(
-                                "secureConnectionStart", -1
-                            ),
-                            "connect_end": timing.get("connectEnd", -1),
-                            "request_start": timing.get("requestStart", -1),
-                            "response_start": timing.get("responseStart", -1),
-                            "response_end": timing.get("responseEnd", -1),
-                        },
+                        "timing": timing,
                         "request_headers": request_headers,
                         "response_headers": response_headers,
                         "response_body": response_body,
@@ -304,9 +298,9 @@ async def browse(
                         {
                             "step": len(redirects) + 1,
                             "from": request.redirected_from.url,
-                            "to": request.redirected_from.redirected_to.url,
+                            "to": request.url,
                             "status_code": status_code,
-                            "server": await response.server_addr(),
+                            "server": server_address,
                             "resource_type": request.resource_type,
                         }
                     )
@@ -318,14 +312,14 @@ async def browse(
 
         def log_console(msg):
             try:
-                logs.append({"console_message": msg})
-            except:
+                logs.append({"console_message": msg.text})
+            except Exception:
                 pass
 
         def log_js_error(error):
             try:
                 logs.append({"javascript_error": str(error)})
-            except:
+            except Exception:
                 pass
 
         page.on("request", log_request)
@@ -346,7 +340,6 @@ async def browse(
         page.on("download", handle_download)
 
         try:
-            # all reqs should not await responses
             if method == "POST" and post_data:
                 await page.goto(
                     url,
@@ -357,6 +350,10 @@ async def browse(
                 )
             else:
                 await page.goto(url, wait_until="networkidle", timeout=120000)
+
+            # attemt to close cookiebanner
+            if cookiebanner:
+                close_cookie_banners(page)
             await page.wait_for_load_state("networkidle", timeout=120000)
         except PlaywrightTimeoutError:
             logs.append({"console_message": "Navigation timed out"})
@@ -376,13 +373,27 @@ async def browse(
 
         cookies = await context.cookies()
 
-        await asyncio.sleep(10)
+        # Capture screenshot
         screenshot = await page.screenshot()
         image = Image.open(io.BytesIO(screenshot))
         full_optimized = optimize_image(image, quality=85)
         thumbnail_image = create_thumbnail(image, max_size=450)
         screenshot_b64 = base64.b64encode(full_optimized).decode("utf-8")
         thumbnail_b64 = base64.b64encode(thumbnail_image).decode("utf-8")
+
+        # Close context to save video
+        await context.close()
+        await browser.close()
+
+        # Retrieve video path
+        video_file_path = await page.video.path()
+
+        # Read and encode the video file
+        with open(video_file_path, "rb") as video_file:
+            video_base64 = base64.b64encode(video_file.read()).decode("utf-8")
+
+        # Clean up the video file
+        os.remove(video_file_path)
 
         response_data = {
             "redirects": redirects,
@@ -395,9 +406,9 @@ async def browse(
             "screenshot": screenshot_b64,
             "thumbnail": thumbnail_b64,
             "downloaded_files": downloaded_files,
+            "video": video_base64,
         }
 
-        await browser.close()
         serialized_response_data = json.dumps(response_data)
         cache.set(cache_key, serialized_response_data, expire=CACHE_EXPIRATION_SECONDS)
         return JSONResponse(content=response_data)
@@ -576,7 +587,7 @@ async def html_to_markdown(html: str = Form(...)):
 
 
 @app.get("/video", response_class=FileResponse)
-async def browse_with_video(
+async def video(
     url: str,
     browser_name: str = "chromium",
     width: int = Query(1280),
