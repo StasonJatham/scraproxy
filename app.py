@@ -3,6 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from playwright.async_api import async_playwright
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from fastapi.responses import FileResponse
 from starlette.middleware.gzip import GZipMiddleware
 import playwright._impl._errors as playwright_errors
 import base64
@@ -26,7 +27,7 @@ import json
 from PIL import Image
 import io
 import uuid
-from config import setup_configurations
+from config import setup_configurations, url_to_sha256_filename
 
 
 app = FastAPI(
@@ -345,6 +346,7 @@ async def browse(
         page.on("download", handle_download)
 
         try:
+            # all reqs should not await responses
             if method == "POST" and post_data:
                 await page.goto(
                     url,
@@ -571,3 +573,56 @@ async def html_to_markdown(html: str = Form(...)):
     markdown_content = markdown_converter.handle(html)
 
     return MarkdownResponse(markdown=markdown_content)
+
+
+@app.get("/video", response_class=FileResponse)
+async def browse_with_video(
+    url: str,
+    browser_name: str = "chromium",
+    width: int = Query(1280),
+    height: int = Query(720),
+):
+    """
+    Browse a webpage, record a video of the session, and return the video file to play in the browser.
+
+    ### Parameters:
+    - **url**: (str) The URL of the webpage to browse.
+    - **browser_name**: (str) The browser to use (chromium, firefox, webkit). Defaults to "chromium".
+    - **width**: (int) Video width. Defaults to 1280.
+    - **height**: (int) Video height. Defaults to 720.
+
+    ### Returns:
+    - The recorded video file of the browsing session.
+    """
+
+    async with async_playwright() as p:
+        browser_type = getattr(p, browser_name, None)
+        if browser_type is None:
+            raise HTTPException(
+                status_code=400, detail=f'Browser "{browser_name}" is not supported'
+            )
+
+        video_dir = os.path.join(os.getcwd(), "videos")
+        os.makedirs(video_dir, exist_ok=True)
+        video_filename = url_to_sha256_filename(url)
+
+        browser = await browser_type.launch(headless=True)
+        context = await browser.new_context(
+            record_video_dir=video_dir,
+            record_video_size={"width": width, "height": height},
+        )
+        page = await context.new_page()
+
+        try:
+            await page.goto(url, wait_until="networkidle")
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Error navigating to the page: {str(e)}"
+            )
+
+        await context.close()
+        video_path = await page.video.path()
+        await browser.close()
+        return FileResponse(
+            video_path, media_type="video/webm", filename=video_filename
+        )
