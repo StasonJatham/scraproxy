@@ -8,6 +8,7 @@ from starlette.middleware.gzip import GZipMiddleware
 import playwright._impl._errors as playwright_errors
 import base64
 import os
+from datetime import datetime
 from bs4 import BeautifulSoup
 import htmlmin
 
@@ -196,6 +197,8 @@ async def browse(
                         "redirected_from": redirected_from_url,
                         "redirected_to": redirected_to_url,
                         "timing": timing,
+                        "sizes": await request.sizes(),
+                        "request_time": datetime.now().isoformat(),
                     }
                 )
 
@@ -290,6 +293,7 @@ async def browse(
                         "request_headers": request_headers,
                         "response_headers": response_headers,
                         "response_body": response_body,
+                        "response_time": datetime.now().isoformat(),
                     }
                 )
 
@@ -462,6 +466,7 @@ async def screenshotter(
             "url": page.url,
             "screenshot": screenshot_b64,
             "thumbnail": thumbnail_b64,
+            "request_time": datetime.now().isoformat(),
         }
 
     if not live:
