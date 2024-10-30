@@ -363,13 +363,18 @@ async def browse(
             logs.append({"console_message": "Navigation timed out"})
 
         try:
+            await page.wait_for_load_state("networkidle", timeout=120000)
             title = await page.title()
+        except playwright_errors.Error:
+            title = "Title unavailable due to navigation"
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=120000)
             meta_description = (
                 await page.locator("meta[name='description']").get_attribute("content")
                 or "No Meta Description"
             )
         except playwright_errors.Error:
-            title = "Title unavailable due to navigation"
             meta_description = "Meta description unavailable due to navigation"
 
         performance_timing = await page.evaluate("window.performance.timing.toJSON()")
@@ -399,6 +404,21 @@ async def browse(
 
         # Clean up the video file
         os.remove(video_file_path)
+        if not redirects:
+            # fixes if no redirects happened. TODO unclean
+            for netw in network_data:
+                if netw["network"] == "response":
+                    redirects.append(
+                        {
+                            "step": 0,
+                            "from": netw["url"],
+                            "to": netw["url"],
+                            "status_code": netw["status"],
+                            "server": netw["server"],
+                            "resource_type": netw["resource_type"],
+                        }
+                    )
+                    break
 
         response_data = {
             "redirects": redirects,
