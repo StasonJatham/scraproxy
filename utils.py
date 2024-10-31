@@ -3,6 +3,8 @@ import hashlib
 import io
 import os
 from dotenv import load_dotenv
+import asyncio
+import time
 
 
 def load_env_file(env_file=".env"):
@@ -54,3 +56,30 @@ def create_thumbnail(image, max_size):
 
 def generate_cache_key(data):
     return hashlib.md5(data.encode("utf-8")).hexdigest()
+
+
+async def smooth_scroll(page, max_duration=30, scroll_pause=0.5, scroll_amount=100):
+    """
+    Smoothly scrolls down a page, stopping when either the maximum duration is reached,
+    or no new content is detected (for SPAs and infinite scroll pages).
+
+    Parameters:
+    - page: The Playwright page instance.
+    - max_duration: The maximum time in seconds to scroll. Default is 30 seconds.
+    - scroll_pause: Pause duration in seconds after each scroll to allow content loading.
+    - scroll_amount: The pixel amount to scroll per scroll operation.
+    """
+    start_time = time.time()
+    previous_scroll_height = await page.evaluate("() => document.body.scrollHeight")
+
+    while time.time() - start_time < max_duration:
+        await page.evaluate(f"() => window.scrollBy(0, {scroll_amount})")
+        await asyncio.sleep(scroll_pause)
+        current_scroll_height = await page.evaluate("() => document.body.scrollHeight")
+        if current_scroll_height == previous_scroll_height:
+            print("Reached the end of content.")
+            break
+
+        previous_scroll_height = current_scroll_height
+
+    await page.evaluate("() => window.scrollTo(0, 0)")

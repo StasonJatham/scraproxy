@@ -22,7 +22,7 @@ from definitions import (
 )
 import html2text
 from readability import Document
-from utils import generate_cache_key, optimize_image, create_thumbnail
+from utils import generate_cache_key, optimize_image, create_thumbnail, smooth_scroll
 import json
 from PIL import Image
 import io
@@ -85,6 +85,7 @@ async def browse(
     post_data: str = None,
     browser_name: str = "chromium",
     cookiebanner: bool = Query(False, description="Attempt to close cookie banners"),
+    scroll: bool = Query(False, description="Attempt to scroll down the page."),
     credentials: HTTPAuthorizationCredentials = Depends(optional_auth),
 ):
     """
@@ -147,7 +148,7 @@ async def browse(
         context = await browser.new_context(
             accept_downloads=True,
             record_video_dir=video_dir,
-            record_video_size={"width": 1280, "height": 720},
+            record_video_size={"width": 640, "height": 360},
         )
         page = await context.new_page()
 
@@ -344,39 +345,75 @@ async def browse(
         page.on("download", handle_download)
 
         try:
+            # Navigate to the URL
             if method == "POST" and post_data:
-                await page.goto(
-                    url,
-                    method=method,
-                    post_data=post_data,
-                    wait_until="networkidle",
-                    timeout=120000,
-                )
+                await page.goto(url, method=method, post_data=post_data)
             else:
-                await page.goto(url, wait_until="networkidle", timeout=120000)
+                await page.goto(url)
 
-            # attemt to close cookiebanner
+            # Wait for the page to stabilize (with timeout handling)
+            try:
+                await page.wait_for_load_state(
+                    "domcontentloaded", timeout=30000
+                )  # 30 seconds
+            except PlaywrightTimeoutError:
+                logs.append(
+                    {
+                        "warning": "Initial page load timed out, proceeding with current state."
+                    }
+                )
+
+            # Attempt to close cookie banners, if applicable
             if cookiebanner:
                 await hide_cookie_banners(page)
-            await page.wait_for_load_state("networkidle", timeout=120000)
+
+            # Final wait to ensure the page is stable after banner interaction
+            try:
+                await page.wait_for_load_state("networkidle", timeout=30000)
+            except PlaywrightTimeoutError:
+                logs.append(
+                    {"warning": "Final load state timed out after banner interaction."}
+                )
+
         except PlaywrightTimeoutError:
-            logs.append({"console_message": "Navigation timed out"})
+            logs.append({"error": "Overall navigation timed out completely."})
 
         try:
-            await page.wait_for_load_state("networkidle", timeout=120000)
+            await page.wait_for_load_state("load", timeout=30000)
             title = await page.title()
-        except playwright_errors.Error:
-            title = "Title unavailable due to navigation"
+        except PlaywrightTimeoutError:
+            title = "Title unavailable due to load timeout"
+            logs.append(
+                {"warning": "Page load timed out, title retrieval may be unstable."}
+            )
+        except Exception as e:
+            title = "Title unavailable due to error"
+            logs.append({"error": f"Failed to retrieve title due to error: {str(e)}"})
 
         try:
-            await page.wait_for_load_state("networkidle", timeout=120000)
-            meta_description = (
-                await page.locator("meta[name='description']").get_attribute("content")
-                or "No Meta Description"
-            )
-        except playwright_errors.Error:
-            meta_description = "Meta description unavailable due to navigation"
+            # Ensure the page is fully loaded, not just network idle
+            await page.wait_for_load_state("load", timeout=30000)
 
+            # Check if the meta description is available, with fallback logging
+            meta_description = await page.locator(
+                "meta[name='description']"
+            ).get_attribute("content")
+            if not meta_description:
+                meta_description = "No Meta Description"
+        except PlaywrightTimeoutError:
+            meta_description = "Meta description unavailable due to load timeout"
+            logs.append(
+                {
+                    "warning": "Page load timed out, meta description retrieval may be unstable."
+                }
+            )
+        except Exception as e:
+            meta_description = "Meta description unavailable due to error"
+            logs.append(
+                {"error": f"Failed to retrieve meta description due to error: {str(e)}"}
+            )
+
+        # Get performance metrics
         performance_timing = await page.evaluate("window.performance.timing.toJSON()")
         performance_metrics["performance_timing"] = performance_timing
 
@@ -390,6 +427,9 @@ async def browse(
         thumbnail_image = create_thumbnail(image, max_size=450)
         screenshot_b64 = base64.b64encode(full_optimized).decode("utf-8")
         thumbnail_b64 = base64.b64encode(thumbnail_image).decode("utf-8")
+
+        if scroll:
+            await smooth_scroll(page)
 
         # Close context to save video
         await context.close()
